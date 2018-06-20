@@ -1,0 +1,12 @@
+{
+  "name": "pg-relation-tag-plugin",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "https://github.com/tngmichael/pg-relation-tag-plugin.git",
+  "author": "<tngmichael89@gmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "prettier": "^1.13.5"
+  },
+  "dependencies": {}
+}
