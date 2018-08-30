@@ -1,0 +1,11 @@
+query {
+  allPosts {
+    nodes {
+      headline
+      body
+      userByUserId {
+        name
+      }
+    }
+  }
+}

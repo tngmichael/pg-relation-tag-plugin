@@ -1,12 +1,21 @@
 {
   "name": "pg-relation-tag-plugin",
-  "version": "1.0.0",
+  "version": "1.0.0-beta.1",
   "main": "index.js",
+  "scripts": {
+    "test": "scripts/test"
+  },
   "repository": "https://github.com/tngmichael/pg-relation-tag-plugin.git",
   "author": "<tngmichael89@gmail.com>",
   "license": "MIT",
   "devDependencies": {
+    "graphql": ">=0.9 <0.14",
+    "jest": "^20.0.4",
+    "pg": ">=6.1.0 <8",
+    "postgraphile-core": "^4.0.0-beta.8",
     "prettier": "^1.13.5"
   },
-  "dependencies": {}
+  "jest": {
+    "testRegex": "__tests__/.*\\.test\\.js$"
+  }
 }

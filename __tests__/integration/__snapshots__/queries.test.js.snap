@@ -1,0 +1,19 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`p.graphql 1`] = `
+Object {
+  "data": Object {
+    "allPosts": Object {
+      "nodes": Array [
+        Object {
+          "body": "Best way to learn postgraphile is using it",
+          "headline": "Learning Postgraphile",
+          "userByUserId": Object {
+            "name": "Michael",
+          },
+        },
+      ],
+    },
+  },
+}
+`;
