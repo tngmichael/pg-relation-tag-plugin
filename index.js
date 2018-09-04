@@ -2,25 +2,7 @@ const debugFactory = require("debug");
 
 const debug = debugFactory("graphile-build-pg");
 
-const OMIT = 0;
-const DEPRECATED = 1;
-const ONLY = 2;
-
 function PgRelationTagPlugin(builder, options) {
-  const {
-    pgLegacyRelations,
-    pgSimpleCollections,
-    pgSchemas: schemas
-  } = options;
-  const hasConnections = pgSimpleCollections !== "only";
-  const hasSimpleCollections =
-    pgSimpleCollections === "only" || pgSimpleCollections === "both";
-  const legacyRelationMode =
-    {
-      only: ONLY,
-      deprecated: DEPRECATED
-    }[pgLegacyRelations] || OMIT;
-
   // NOTE forward relation
   builder.hook("GraphQLObjectType:fields", (fields, build, context) => {
     const {
@@ -57,74 +39,192 @@ function PgRelationTagPlugin(builder, options) {
       return fields;
     }
     // NOTE This is a relation in which we (table) are local, and there's a foreign table
+    const relation = {};
+
+    if (table.tags.foreignKey && table.tags.foreignKey !== true) {
+      // TODO what if array
+      const matches = table.tags.foreignKey.match(
+        /^\((.+)\) references ([^(]+)(?:\((.+)\)|)$/
+      );
+      if (!matches) {
+        throw new Error(
+          `Could not accept @foreignKey parameter '${table.tags.foreignKey}'!`
+        );
+      }
+      const [, rawAttrs, relationRef, rawRefAttrs] = matches;
+      const { namespaceName, entityName } = pgParseIdentifier(relationRef);
+
+      const attrs = rawAttrs.split(",").map(a => a.trim());
+      if (!attrs[0]) {
+        throw new Error(
+          `Could not accept @foreignKey parameter '${rawAttrs}'!`
+        );
+      }
+      const foreignAttrs = rawRefAttrs
+        ? rawRefAttrs.split(",").map(a => a.trim())
+        : [rawRefAttrs];
+      if (attrs.length !== foreignAttrs.length) {
+        throw new Error(
+          `Could not accept @foreignKey parameter '${rawRefAttrs}'!`
+        );
+      }
+
+      const originKeys = attrs.map(attr =>
+        table.attributes.find(a => a.name === attr)
+      );
+      if (!originKeys.length) {
+        throw new Error(
+          `Could not find '${rawAttrs}' within table '${table.namespaceName}.${
+            table.name
+          }'!`
+        );
+      }
+
+      // TODO should check attr.aclSelectable otherwise an error might occur
+      // TODO redundant
+      const gqlTableType = pgGetGqlTypeByTypeIdAndModifier(table.type.id, null);
+
+      const tableTypeName = gqlTableType.name;
+      if (!gqlTableType) {
+        debug(`Could not determine type for table with id ${table.type.id}!`);
+        return fields;
+      }
+
+      const foreignTable = introspectionResultsByKind.class.find(
+        table =>
+          table.name === entityName && table.namespaceName === namespaceName
+      );
+      if (!foreignTable) {
+        // TODO not informative
+        throw new Error(
+          `Could not find the foreign table '${namespaceName}.${entityName}'!`
+        );
+      }
+
+      const gqlForeignTableType = pgGetGqlTypeByTypeIdAndModifier(
+        foreignTable.type.id,
+        null
+      );
+      const foreignTableTypeName = gqlForeignTableType.name;
+      const foreignSchema = introspectionResultsByKind.namespace.find(
+        n => n.id === foreignTable.namespaceId
+      );
+
+      const foreignKeys = foreignAttrs.map(attr =>
+        foreignTable.attributes.find(a => a.name === (attr || "id"))
+      );
+      if (!foreignKeys.every(_ => _)) {
+        throw new Error(`Could not find key columns!`);
+      }
+
+      const constraints = introspectionResultsByKind.constraint.filter(
+        con =>
+          con.classId === foreignTable.id &&
+          (foreignAttrs[0]
+            ? con.type === "p" || con.type === "u"
+            : con.type === "p") &&
+          con.keyAttributeNums.toString() ===
+            foreignKeys.map(k => k.num).toString()
+      );
+      if (!constraints.length) {
+        throw new Error(
+          `Could not find unique column that reference to '${rawRefAttrs}'!`
+        );
+      }
+
+      const key = originKeys.map(a => a.name).join(".");
+      relation[key] = {
+        tableTypeName,
+        originKeys,
+        foreignKeys,
+        foreignSchema,
+        foreignTable,
+        foreignTableTypeName,
+        gqlForeignTableType
+      };
+    }
 
     const attributes = table.attributes
-      .filter(attr => attr.classId === table.id && attr.tags.references)
+      .filter(attr => attr.tags.references)
       .sort((a, b) => a.num - b.num);
 
-    let relation = {};
     if (attributes.length) {
       // TODO should check attr.aclSelectable otherwise an error might occur
+      // TODO redundant
       const gqlTableType = pgGetGqlTypeByTypeIdAndModifier(table.type.id, null);
       const tableTypeName = gqlTableType.name;
       if (!gqlTableType) {
-        debug(`Could not determine type for table with id ${attr.class.id}`);
-        return memo;
+        debug(`Could not determine type for table with id ${table.type.id}`);
+        return fields;
       }
 
       attributes.reduce((memo, attr) => {
-        if (!attr.tags.references || attr.tags.references === true) return memo;
-        // TODO must test if array
-        const tags = [].concat(attr.tags.references);
-        tags.forEach(references => {
+        if (!memo[attr.name]) {
+          if (!attr.tags.references || attr.tags.references === true)
+            return memo;
+          // NOTE references might be an array
+          const references = [].concat(attr.tags.references)[0];
           const matches = references.match(/^([^(]+)(?:\(\W*([^"]+)\W*\)|)$/);
           if (!matches) {
             throw new Error(
-              `Error could not accept @references parameter '${references}'`
+              `Could not accept @references parameter '${references}'`
             );
           }
 
           const [, relationRef, attrRef] = matches;
           const { namespaceName, entityName } = pgParseIdentifier(relationRef);
-          const key = `${namespaceName}.${entityName}`;
 
-          if (memo[key]) {
-            memo[key].originKeys.push(attr);
-            memo[key].rawForeignAttributes.push(attrRef);
-          } else {
-            const foreignTable = introspectionResultsByKind.class.find(
-              table =>
-                table.name === entityName &&
-                table.namespaceName === namespaceName
+          const foreignTable = introspectionResultsByKind.class.find(
+            table =>
+              table.name === entityName && table.namespaceName === namespaceName
+          );
+          if (!foreignTable) {
+            // TODO not informative
+            throw new Error(
+              `Could not find the foreign table '${namespaceName}.${entityName}'`
             );
-            if (!foreignTable) {
-              // TODO give as much information in this error as possible; e.g. include the table and attribute you're currently looking at and the `references` tag value. More data helps people debug things faster.
-              throw new Error(
-                `Could not find the foreign table '${namespaceName}.${entityName}'`
-              );
-            }
-
-            const gqlForeignTableType = pgGetGqlTypeByTypeIdAndModifier(
-              foreignTable.type.id,
-              null
-            );
-            const foreignTableTypeName = gqlForeignTableType.name;
-            const foreignSchema = introspectionResultsByKind.namespace.find(
-              n => n.id === foreignTable.namespaceId
-            );
-
-            memo[key] = {
-              gqlTableType,
-              tableTypeName,
-              originKeys: [attr],
-              rawForeignAttributes: [attrRef],
-              foreignSchema: foreignSchema,
-              foreignTable: foreignTable,
-              foreignTableTypeName,
-              gqlForeignTableType
-            };
           }
-        });
+
+          const gqlForeignTableType = pgGetGqlTypeByTypeIdAndModifier(
+            foreignTable.type.id,
+            null
+          );
+          const foreignTableTypeName = gqlForeignTableType.name;
+          const foreignSchema = introspectionResultsByKind.namespace.find(
+            n => n.id === foreignTable.namespaceId
+          );
+
+          const foreignKey = foreignTable.attributes.find(
+            attr => attr.name === (attrRef || "id")
+          );
+          if (!foreignKey) {
+            throw new Error(`Could not find key columns!`);
+          }
+
+          const constraints = introspectionResultsByKind.constraint.filter(
+            con =>
+              con.classId === foreignTable.id &&
+              (attrRef
+                ? con.type === "p" || con.type === "u"
+                : con.type === "p") &&
+              con.keyAttributeNums.toString() === foreignKey.num.toString()
+          );
+          if (!constraints.length) {
+            throw new Error(
+              `Could not find unique column that reference to '${attrRef}'!`
+            );
+          }
+
+          memo[attr.name] = {
+            tableTypeName,
+            originKeys: [attr],
+            foreignKeys: [foreignKey],
+            foreignSchema,
+            foreignTable,
+            foreignTableTypeName,
+            gqlForeignTableType
+          };
+        }
 
         return memo;
       }, relation);
@@ -134,53 +234,14 @@ function PgRelationTagPlugin(builder, options) {
       fields,
       Object.keys(relation).reduce((memo, key) => {
         const {
-          gqlTableType,
           tableTypeName,
           originKeys,
-          rawForeignAttributes,
+          foreignKeys,
           foreignSchema,
           foreignTable,
           foreignTableTypeName,
           gqlForeignTableType
         } = relation[key];
-
-        const foreignAttributes = introspectionResultsByKind.attribute
-          .filter(attr => attr.classId === foreignTable.id)
-          .sort((a, b) => a.num - b.num);
-
-        const foreignKeys = rawForeignAttributes.map(attrRef => {
-          const uniqueConstraints = introspectionResultsByKind.constraint.filter(
-            con =>
-              con.classId === foreignTable.id &&
-              (attrRef
-                ? con.type === "p" || con.type === "u"
-                : con.type === "p")
-          );
-          if (attrRef) {
-            const key = foreignAttributes.find(attr => attr.name === attrRef);
-            const isUnique = uniqueConstraints.some(
-              constraint =>
-                constraint.keyAttributeNums.indexOf(key && key.num) !== -1
-            );
-            // TODO throw error if not unique
-            return isUnique && key;
-          } else {
-            return (
-              uniqueConstraints[0] &&
-              foreignAttributes.find(
-                attr =>
-                  attr.num ===
-                  primaryKeyConstraints[0].keyAttributeNums.sort(
-                    (a, b) => a - b
-                  )[0]
-              )
-            );
-          }
-        });
-
-        if (!originKeys.every(_ => _) || !foreignKeys.every(_ => _)) {
-          throw new Error("Could not find key columns!");
-        }
 
         const fieldName = inflection.singleRelationByKeys(
           originKeys,
@@ -241,7 +302,6 @@ function PgRelationTagPlugin(builder, options) {
             isPgForwardRelationField: true
           }
         );
-
         return memo;
       }, {}),
       `Adding forward relations to '${Self.name}'  with references tag`
