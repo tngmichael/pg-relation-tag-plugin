@@ -52,7 +52,7 @@ beforeAll(() => {
             pgClient: pgClient
           });
           if (result.errors) {
-            console.log(result.errors.map(e => e.originalError));
+            console.log(result.errors.map(e => e.message));
           }
           return result;
         })

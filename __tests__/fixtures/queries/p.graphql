@@ -6,6 +6,9 @@ query {
       userByUserId {
         name
       }
+      userByReviewedBy {
+        name
+      }
     }
   }
 }
