@@ -2,7 +2,7 @@ const debugFactory = require("debug");
 
 const debug = debugFactory("graphile-build-pg");
 
-function PgRelationTagPlugin(builder, options) {
+function PgRelationTagPlugin(builder) {
   // NOTE forward relation
   builder.hook("GraphQLObjectType:fields", (fields, build, context) => {
     const {
@@ -13,7 +13,6 @@ function PgRelationTagPlugin(builder, options) {
       pgIntrospectionResultsByKind: introspectionResultsByKind,
       pgSql: sql,
       inflection,
-      graphql: { GraphQLInt },
       pgParseIdentifier,
       pgQueryFromResolveData
     } = build;
@@ -42,15 +41,12 @@ function PgRelationTagPlugin(builder, options) {
     const relation = {};
 
     if (table.tags.foreignKey && table.tags.foreignKey !== true) {
-
       const foreignKeys = [].concat(...Array.of(table.tags.foreignKey));
 
       foreignKeys.forEach(function(foreignKey) {
-       
-        // TODO what if array
-        const matches = foreignKey.trim().match(
-          /^\((.+)\) references ([^(]+)(?:\((.+)\)|)$/
-        );
+        const matches = foreignKey
+          .trim()
+          .match(/^\((.+)\) references ([^(]+)(?:\((.+)\)|)$/);
         if (!matches) {
           throw new Error(
             `Could not accept @foreignKey parameter '${foreignKey}'!`
@@ -60,14 +56,25 @@ function PgRelationTagPlugin(builder, options) {
         const { namespaceName, entityName } = pgParseIdentifier(relationRef);
 
         const attrs = rawAttrs.split(",").map(a => a.trim());
-        if (!attrs[0]) {
+        if (!attrs.every(_ => _) || new Set(attrs).size !== attrs.length) {
           throw new Error(
             `Could not accept @foreignKey parameter '${rawAttrs}'!`
           );
         }
+        if (attrs.length > 1 && !rawRefAttrs) {
+          throw new Error(
+            `Could not accept undefined parameter for a group of columns`
+          );
+        }
+
         const foreignAttrs = rawRefAttrs
           ? rawRefAttrs.split(",").map(a => a.trim())
           : [rawRefAttrs];
+        if (new Set(foreignAttrs).size !== foreignAttrs.length) {
+          throw new Error(
+            `Could not accept duplicates for referenced columns!`
+          );
+        }
         if (attrs.length !== foreignAttrs.length) {
           throw new Error(
             `Could not accept @foreignKey parameter '${rawRefAttrs}'!`
@@ -79,16 +86,17 @@ function PgRelationTagPlugin(builder, options) {
         );
         if (!originKeys.length) {
           throw new Error(
-            `Could not find '${rawAttrs}' within table '${table.namespaceName}.${
-              table.name
-            }'!`
+            `Could not find '${rawAttrs}' within table '${
+              table.namespaceName
+            }.${table.name}'!`
           );
         }
 
         // TODO should check attr.aclSelectable otherwise an error might occur
-        // TODO redundant
-        const gqlTableType = pgGetGqlTypeByTypeIdAndModifier(table.type.id, null);
-
+        const gqlTableType = pgGetGqlTypeByTypeIdAndModifier(
+          table.type.id,
+          null
+        );
         const tableTypeName = gqlTableType.name;
         if (!gqlTableType) {
           debug(`Could not determine type for table with id ${table.type.id}!`);
@@ -122,23 +130,32 @@ function PgRelationTagPlugin(builder, options) {
           throw new Error(`Could not find key columns!`);
         }
 
-        const constraints = introspectionResultsByKind.constraint.filter(
+        const constraint = introspectionResultsByKind.constraint.find(
           con =>
             con.classId === foreignTable.id &&
-            (foreignAttrs[0]
+            (foreignAttrs.toString()
               ? con.type === "p" || con.type === "u"
               : con.type === "p") &&
             con.keyAttributeNums.toString() ===
-              foreignKeys.map(k => k.num).toString()
+              foreignKeys
+                .map(k => k.num)
+                .sort((a, b) => a - b)
+                .toString()
         );
-        if (!constraints.length) {
+        if (!constraint) {
           throw new Error(
-            `Could not find unique column that reference to '${rawRefAttrs}'!`
+            `Could not find unique constraint matching '${rawRefAttrs}' ` +
+              `for referenced table ${relationRef}!`
           );
         }
 
-        const key = originKeys.map(a => a.name).join(".") + "->" + relationRef + + "(" + rawRefAttrs + ")";;
-
+        const key =
+          originKeys.map(k => k.name) +
+          "->" +
+          relationRef +
+          "(" +
+          foreignKeys.map(k => k.name) +
+          ")";
         relation[key] = {
           tableTypeName,
           originKeys,
@@ -157,7 +174,6 @@ function PgRelationTagPlugin(builder, options) {
 
     if (attributes.length) {
       // TODO should check attr.aclSelectable otherwise an error might occur
-      // TODO redundant
       const gqlTableType = pgGetGqlTypeByTypeIdAndModifier(table.type.id, null);
       const tableTypeName = gqlTableType.name;
       if (!gqlTableType) {
@@ -166,15 +182,14 @@ function PgRelationTagPlugin(builder, options) {
       }
 
       attributes.reduce((memo, attr) => {
-
-        if (!attr.tags.references || attr.tags.references === true)
-          return memo;
+        if (!attr.tags.references || attr.tags.references === true) return memo;
 
         const references = [].concat(...Array.of(attr.tags.references));
 
         references.forEach(function(reference) {
-
-          const matches = reference.trim().match(/^([^(]+)(?:\(\W*([^"]+)\W*\)|)$/);
+          const matches = reference
+            .trim()
+            .match(/^([^(]+)(?:\(\W*([^"]+)\W*\)|)$/);
           if (!matches) {
             throw new Error(
               `Could not accept @references parameter '${reference}'`
@@ -187,10 +202,10 @@ function PgRelationTagPlugin(builder, options) {
           const key = attr.name + "->" + relationRef + "(" + attrRef + ")";
 
           if (!memo[key]) {
-            
             const foreignTable = introspectionResultsByKind.class.find(
               table =>
-                table.name === entityName && table.namespaceName === namespaceName
+                table.name === entityName &&
+                table.namespaceName === namespaceName
             );
             if (!foreignTable) {
               // TODO not informative
@@ -215,7 +230,7 @@ function PgRelationTagPlugin(builder, options) {
               throw new Error(`Could not find key columns!`);
             }
 
-            const constraints = introspectionResultsByKind.constraint.filter(
+            const constraint = introspectionResultsByKind.constraint.find(
               con =>
                 con.classId === foreignTable.id &&
                 (attrRef
@@ -223,9 +238,10 @@ function PgRelationTagPlugin(builder, options) {
                   : con.type === "p") &&
                 con.keyAttributeNums.toString() === foreignKey.num.toString()
             );
-            if (!constraints.length) {
+            if (!constraint) {
               throw new Error(
-                `Could not find unique column that reference to '${attrRef}'!`
+                `Could not find unique constraint matching '${attrRef}' ` +
+                  `for referenced table ${relationRef}!`
               );
             }
 

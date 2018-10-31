@@ -9,7 +9,7 @@ query {
       userByReviewedBy {
         name
       }
-      userByPublishedBy {
+      userByPublishedByAndEmailTo {
         name
       }
     }

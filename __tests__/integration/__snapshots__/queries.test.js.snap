@@ -8,8 +8,12 @@ Object {
         Object {
           "body": "Best way to learn postgraphile is using it",
           "headline": "Learning Postgraphile",
-          "userByPublishedBy": null,
-          "userByReviewedBy": null,
+          "userByPublishedByAndEmailTo": Object {
+            "name": "Michael",
+          },
+          "userByReviewedBy": Object {
+            "name": "Michael",
+          },
           "userByUserId": Object {
             "name": "Michael",
           },
