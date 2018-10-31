@@ -14,10 +14,11 @@ create table p.post (
   headline                  text,
   body                      text,
   user_id                   int,
-  reviewed_by               int
+  reviewed_by               int,
+  published_by              int
 );
 
 comment on column p.post.user_id is
   E'@references p.user(id)';
 comment on table p.post is
-  E'@foreignKey (reviewed_by) references p.user(id)';
+  E'@foreignKey (reviewed_by) references p.user(id)\n@foreignKey (published_by) references p.user(id)';
