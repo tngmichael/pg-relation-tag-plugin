@@ -9,6 +9,9 @@ query {
       userByReviewedBy {
         name
       }
+      userByPublishedBy {
+        name
+      }
     }
   }
 }
